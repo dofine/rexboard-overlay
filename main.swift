@@ -145,7 +145,7 @@ final class BoardModel: ObservableObject {
     }
 
     var preferredHeight: CGFloat {
-        var height: CGFloat = 24 + 44 + 1
+        var height: CGFloat = 44 + 1
         if errorText != nil { height += 34 }
         if needsRows.isEmpty && workingRows.isEmpty {
             height += 64
@@ -635,8 +635,6 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.35), radius: 16, x: 0, y: 8)
-        .padding(12)
     }
 
     private var subtitle: String {
@@ -803,7 +801,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var showItem: NSMenuItem!
     private var loginItem: NSMenuItem!
     private var isVisible = true
-    private let panelWidth: CGFloat = 404
+    private let panelWidth: CGFloat = 380
     private let defaults = UserDefaults.standard
     private var resizeGuard = false
 
@@ -886,7 +884,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false

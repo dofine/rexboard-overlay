@@ -55,7 +55,7 @@ rex.bind("ctrl+space>o", "rexboard_overlay")
 
 - Poll interval: `BoardModel.schedule(interval:)` in `main.swift` (2s visible, 10s hidden).
 - Rows: needs-you rows are always shown; working rows are capped at 3 with a `+N more` line.
-- Panel width: `AppDelegate.panelWidth` (404 including the 12pt shadow padding).
+- Panel width: `AppDelegate.panelWidth` (380).
 - Background: `VisualEffectView(material: .hudWindow)`.
 - Screenshot/demo data: launch the binary with `REXBOARD_OVERLAY_DEMO=1` to show generic rows without calling rexboard.
 
