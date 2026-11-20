@@ -13,11 +13,7 @@ This is a separate macOS app, not a Rex plugin: Rex has no plugin API for native
 open -a "$HOME/Applications/Rexboard Overlay.app"
 ```
 
-Requires Xcode or the Command Line Tools (`swiftc`) and rexboard on one of:
-
-- `~/.local/bin/rexboard`
-- `/opt/homebrew/bin/rexboard`
-- `/usr/local/bin/rexboard`
+Requires Xcode or the Command Line Tools (`swiftc`), and a [rexboard](https://github.com/vanducng/rexboard) binary in a standard install location.
 
 ## Use
 
