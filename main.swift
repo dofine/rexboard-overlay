@@ -89,20 +89,11 @@ struct OverlayError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-func shortAge(from date: Date) -> String {
-    let seconds = max(0, Int(Date().timeIntervalSince(date)))
-    if seconds < 5 { return "now" }
-    if seconds < 60 { return "\(seconds)s" }
-    if seconds < 3600 { return "\(seconds / 60)m" }
-    return "\(seconds / 3600)h"
-}
-
 // MARK: - Model
 
 final class BoardModel: ObservableObject {
     @Published var rows: [AgentRow] = []
     @Published var errorText: String?
-    @Published var lastUpdated: Date?
     @Published var isRefreshing = false
     @Published var jumpingKey: String?
     @Published var toast: String?
@@ -175,7 +166,6 @@ final class BoardModel: ObservableObject {
     func start() {
         startClock()
         if isDemo {
-            lastUpdated = Date()
             onNeedsCountChange?(rows.filter { $0.isNeedsYou }.count)
             onLayoutChange?()
             return
@@ -209,7 +199,6 @@ final class BoardModel: ObservableObject {
 
     func refreshNow() {
         if isDemo {
-            lastUpdated = Date()
             return
         }
         restartWatch()
@@ -338,7 +327,6 @@ final class BoardModel: ObservableObject {
                 guard self.streamGeneration == generation else { return }
                 self.rows = rows
                 self.errorText = nil
-                self.lastUpdated = Date()
                 self.isRefreshing = false
                 self.restartDelay = 1
                 self.onNeedsCountChange?(rows.filter { $0.isNeedsYou }.count)
@@ -889,11 +877,6 @@ struct ContentView: View {
                     .foregroundStyle(.tertiary)
             }
             Spacer()
-            if let updated = model.lastUpdated {
-                Text("updated \(shortAge(from: updated))")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.quaternary)
-            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
