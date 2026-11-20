@@ -65,3 +65,7 @@ rex.bind("ctrl+space>o", "rexboard_overlay")
 It is a foreground-level helper app, not a Rex plugin. It reads rexboard's CLI output, so it inherits rexboard's behavior and needs the Rex app to answer a jump. The Rex app must be running for `rexboard jump` to land on a pane.
 
 This is an unofficial companion app. It is not affiliated with Rex or rexboard; [rexboard](https://github.com/vanducng/rexboard) is MIT-licensed and remains its own project.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
