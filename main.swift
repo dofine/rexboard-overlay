@@ -108,6 +108,7 @@ final class BoardModel: ObservableObject {
     @Published var toast: String?
     @Published var toastIsError = false
     @Published var showWorking = true
+    @Published var clock = Date()
 
     var onLayoutChange: (() -> Void)?
     var onNeedsCountChange: ((Int) -> Void)?
@@ -115,8 +116,17 @@ final class BoardModel: ObservableObject {
     private let binary: String
     private let isDemo: Bool
     private let workQueue = DispatchQueue(label: "rexboard.overlay.client")
-    private var timer: Timer?
-    private var inFlight = false
+    private let parseQueue = DispatchQueue(label: "rexboard.overlay.stream")
+    private var watchProcess: Process?
+    private var watchOut: Pipe?
+    private var watchErr: Pipe?
+    private var streamBuffer = Data()
+    private var streamGeneration = 0
+    private var streamStderr = ""
+    private var restartWork: DispatchWorkItem?
+    private var restartDelay: TimeInterval = 1
+    private var stopping = false
+    private var clockTimer: Timer?
     private var toastWork: DispatchWorkItem?
 
     init() {
@@ -163,28 +173,38 @@ final class BoardModel: ObservableObject {
     }
 
     func start() {
+        startClock()
         if isDemo {
             lastUpdated = Date()
             onNeedsCountChange?(rows.filter { $0.isNeedsYou }.count)
             onLayoutChange?()
             return
         }
-        refreshNow()
-        schedule(interval: 2.0)
+        startWatch()
+    }
+
+    func stop() {
+        stopping = true
+        restartWork?.cancel()
+        restartWork = nil
+        clockTimer?.invalidate()
+        clockTimer = nil
+        closeWatch()
+    }
+
+    private func startClock() {
+        clockTimer?.invalidate()
+        let next = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.clock = Date()
+        }
+        RunLoop.main.add(next, forMode: .common)
+        clockTimer = next
     }
 
     func setVisible(_ visible: Bool) {
-        schedule(interval: visible ? 2.0 : 10.0)
-        if visible { refreshNow() }
-    }
-
-    private func schedule(interval: TimeInterval) {
-        timer?.invalidate()
-        let next = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            self?.refreshNow()
+        if visible && !isDemo {
+            startWatch()
         }
-        RunLoop.main.add(next, forMode: .common)
-        timer = next
     }
 
     func refreshNow() {
@@ -192,62 +212,159 @@ final class BoardModel: ObservableObject {
             lastUpdated = Date()
             return
         }
-        guard !inFlight else { return }
-        inFlight = true
-        isRefreshing = true
-        workQueue.async { [weak self] in
-            guard let self else { return }
-            let result = self.fetchRows()
-            DispatchQueue.main.async {
-                self.inFlight = false
-                self.isRefreshing = false
-                switch result {
-                case .success(let rows):
-                    self.rows = rows
-                    self.errorText = nil
-                    self.lastUpdated = Date()
-                    self.onNeedsCountChange?(rows.filter { $0.isNeedsYou }.count)
-                    self.onLayoutChange?()
-                case .failure(let error):
-                    self.errorText = error.localizedDescription
-                    self.onLayoutChange?()
-                }
-            }
-        }
+        restartWatch()
     }
 
-    private func fetchRows() -> Result<[AgentRow], Error> {
+    private func restartWatch() {
+        guard !stopping else { return }
+        restartWork?.cancel()
+        restartWork = nil
+        closeWatch()
+        restartDelay = 1
+        startWatch()
+    }
+
+    private func closeWatch() {
+        streamGeneration += 1
+        watchOut?.fileHandleForReading.readabilityHandler = nil
+        watchErr?.fileHandleForReading.readabilityHandler = nil
+        if let process = watchProcess {
+            process.terminationHandler = nil
+            process.terminate()
+        }
+        watchProcess = nil
+        watchOut = nil
+        watchErr = nil
+        isRefreshing = false
+    }
+
+    private func startWatch() {
+        guard !stopping, !isDemo, watchProcess == nil else { return }
+        restartWork?.cancel()
+        restartWork = nil
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = ["ls", "--json"]
+        process.arguments = ["watch", "--json"]
         let stdout = Pipe()
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
         process.environment = ProcessInfo.processInfo.environment
 
+        streamGeneration += 1
+        let generation = streamGeneration
+        parseQueue.async { [weak self] in
+            self?.streamBuffer.removeAll(keepingCapacity: true)
+        }
+        streamStderr = ""
+        isRefreshing = true
+
+        let outHandle = stdout.fileHandleForReading
+        outHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            DispatchQueue.main.async {
+                guard let self, self.streamGeneration == generation else { return }
+                self.parseQueue.async {
+                    self.consumeStreamData(data, generation: generation)
+                }
+            }
+        }
+
+        let errHandle = stderr.fileHandleForReading
+        errHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            guard let text = String(data: data, encoding: .utf8) else { return }
+            DispatchQueue.main.async {
+                guard let self, self.streamGeneration == generation else { return }
+                self.streamStderr += text
+                if self.streamStderr.count > 4096 {
+                    self.streamStderr = String(self.streamStderr.suffix(4096))
+                }
+            }
+        }
+
+        process.terminationHandler = { [weak self] finished in
+            DispatchQueue.main.async {
+                guard let self, !self.stopping, self.streamGeneration == generation else { return }
+                self.watchProcess = nil
+                self.watchOut = nil
+                self.watchErr = nil
+                self.isRefreshing = false
+                let detail = self.streamStderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.errorText = detail.isEmpty
+                    ? "rexboard watch stopped (exit \(finished.terminationStatus))"
+                    : detail
+                self.onLayoutChange?()
+                self.scheduleRestart()
+            }
+        }
+
+        watchProcess = process
+        watchOut = stdout
+        watchErr = stderr
+
         do {
             try process.run()
         } catch {
-            return .failure(OverlayError("cannot run rexboard: \(error.localizedDescription)"))
+            watchProcess = nil
+            watchOut = nil
+            watchErr = nil
+            isRefreshing = false
+            errorText = "cannot run rexboard: \(error.localizedDescription)"
+            onLayoutChange?()
+            scheduleRestart()
         }
+    }
 
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        if process.terminationStatus != 0 {
-            let text = String(data: errData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failure(OverlayError(text?.isEmpty == false ? text! : "rexboard ls failed"))
+    private func consumeStreamData(_ data: Data, generation: Int) {
+        guard streamGeneration == generation else { return }
+        streamBuffer.append(data)
+        let newline = Data([0x0A])
+        while let range = streamBuffer.range(of: newline) {
+            let line = streamBuffer.subdata(in: streamBuffer.startIndex..<range.lowerBound)
+            streamBuffer.removeSubrange(streamBuffer.startIndex...range.lowerBound)
+            guard !line.isEmpty else { continue }
+            decodeStreamLine(line, generation: generation)
         }
+    }
 
+    private func decodeStreamLine(_ line: Data, generation: Int) {
         do {
-            let rows = try JSONDecoder().decode([AgentRow].self, from: outData)
-            return .success(rows)
+            let rows = try JSONDecoder().decode([AgentRow].self, from: line)
+            DispatchQueue.main.async {
+                guard self.streamGeneration == generation else { return }
+                self.rows = rows
+                self.errorText = nil
+                self.lastUpdated = Date()
+                self.isRefreshing = false
+                self.restartDelay = 1
+                self.onNeedsCountChange?(rows.filter { $0.isNeedsYou }.count)
+                self.onLayoutChange?()
+            }
         } catch {
-            return .failure(OverlayError("cannot read rexboard JSON: \(error.localizedDescription)"))
+            let text = String(data: line, encoding: .utf8) ?? ""
+            DispatchQueue.main.async {
+                guard self.streamGeneration == generation else { return }
+                self.errorText = "cannot read rexboard stream: \(text.prefix(160))"
+                self.onLayoutChange?()
+            }
         }
+    }
+
+    private func scheduleRestart() {
+        guard !stopping, watchProcess == nil else { return }
+        restartWork?.cancel()
+        let delay = restartDelay
+        restartDelay = min(restartDelay * 2, 10)
+        let work = DispatchWorkItem { [weak self] in
+            self?.restartWork = nil
+            self?.startWatch()
+        }
+        restartWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func jump(_ row: AgentRow) {
@@ -292,7 +409,6 @@ final class BoardModel: ObservableObject {
                 if success {
                     self.showToast("Jumped to \(row.whereText)", isError: false)
                     self.activateRex()
-                    self.refreshNow()
                 } else {
                     self.showToast(text?.isEmpty == false ? text! : "jump failed", isError: true)
                 }
@@ -1063,6 +1179,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        model.stop()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

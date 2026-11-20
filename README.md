@@ -2,7 +2,7 @@
 
 A system-level always-on-top panel for [rexboard](https://github.com/vanducng/rexboard). It shows the agent panes that need you across every Rex host, stays above other apps and Spaces, and jumps to the pane in Rex when you click a row.
 
-This is a separate macOS app, not a Rex plugin: Rex has no plugin API for native windows. It polls `rexboard ls --json` every couple of seconds and runs `rexboard jump <key>` on click.
+This is a separate macOS app, not a Rex plugin: Rex has no plugin API for native windows. It keeps one `rexboard watch --json` stream open and runs `rexboard jump <key>` on click.
 
 ![Rexboard Overlay](docs/overlay.png)
 
@@ -53,7 +53,7 @@ rex.bind("ctrl+space>o", "rexboard_overlay")
 
 ## Tuning
 
-- Poll interval: `BoardModel.schedule(interval:)` in `main.swift` (2s visible, 10s hidden).
+- Data source: one long-lived `rexboard watch --json` process. If it exits, the app restarts it with backoff (1s, doubling to 10s). The UI clock ticks once a second to refresh ages.
 - Rows: needs-you rows are always shown; working rows are capped at 3 with a `+N more` line.
 - Panel width: `AppDelegate.panelWidth` (380).
 - Background: `VisualEffectView(material: .hudWindow)`.
