@@ -4,6 +4,8 @@ A system-level always-on-top panel for [rexboard](https://github.com/vanducng/re
 
 This is a separate macOS app, not a Rex plugin: Rex has no plugin API for native windows. It polls `rexboard ls --json` every couple of seconds and runs `rexboard jump <key>` on click.
 
+![Rexboard Overlay](docs/overlay.png)
+
 ## Build and run
 
 ```sh
@@ -59,6 +61,7 @@ rex.bind("ctrl+space>o", "rexboard_overlay")
 - Rows: needs-you rows are always shown; working rows are capped at 3 with a `+N more` line.
 - Panel width: `AppDelegate.panelWidth` (404 including the 12pt shadow padding).
 - Background: `VisualEffectView(material: .hudWindow)`.
+- Screenshot/demo data: launch the binary with `REXBOARD_OVERLAY_DEMO=1` to show generic rows without calling rexboard.
 
 ## Limitation
 

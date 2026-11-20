@@ -113,6 +113,7 @@ final class BoardModel: ObservableObject {
     var onNeedsCountChange: ((Int) -> Void)?
 
     private let binary: String
+    private let isDemo: Bool
     private let workQueue = DispatchQueue(label: "rexboard.overlay.client")
     private var timer: Timer?
     private var inFlight = false
@@ -125,6 +126,8 @@ final class BoardModel: ObservableObject {
             "/usr/local/bin/rexboard"
         ]
         binary = candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? candidates[0]
+        isDemo = ProcessInfo.processInfo.environment["REXBOARD_OVERLAY_DEMO"] == "1"
+        if isDemo { rows = BoardModel.demoRows() }
     }
 
     var needsRows: [AgentRow] { rows.filter { $0.isNeedsYou } }
@@ -160,6 +163,12 @@ final class BoardModel: ObservableObject {
     }
 
     func start() {
+        if isDemo {
+            lastUpdated = Date()
+            onNeedsCountChange?(rows.filter { $0.isNeedsYou }.count)
+            onLayoutChange?()
+            return
+        }
         refreshNow()
         schedule(interval: 2.0)
     }
@@ -179,6 +188,10 @@ final class BoardModel: ObservableObject {
     }
 
     func refreshNow() {
+        if isDemo {
+            lastUpdated = Date()
+            return
+        }
         guard !inFlight else { return }
         inFlight = true
         isRefreshing = true
@@ -239,6 +252,10 @@ final class BoardModel: ObservableObject {
 
     func jump(_ row: AgentRow) {
         guard jumpingKey == nil else { return }
+        if isDemo {
+            showToast("Demo row: \(row.whereText)", isError: false)
+            return
+        }
         jumpingKey = row.key
         toast = nil
         workQueue.async { [weak self] in
@@ -314,6 +331,143 @@ final class BoardModel: ObservableObject {
     func toggleWorking() {
         showWorking.toggle()
         onLayoutChange?()
+    }
+
+    private static func demoRows() -> [AgentRow] {
+        let now = Date()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        func stamp(_ secondsAgo: TimeInterval) -> String {
+            formatter.string(from: now.addingTimeInterval(-secondsAgo))
+        }
+
+        func makeRow(
+            key: String,
+            host: String = "local",
+            session: String,
+            tab: String,
+            title: String,
+            harness: String,
+            state: String,
+            kind: String? = nil,
+            msg: String,
+            secondsAgo: TimeInterval,
+            seen: Bool,
+            group: String
+        ) -> AgentRow {
+            let time = stamp(secondsAgo)
+            return AgentRow(
+                key: key,
+                host: host,
+                session: session,
+                tab: tab,
+                block_id: key.components(separatedBy: "/").last ?? key,
+                pane: "shell",
+                title: title,
+                harness: harness,
+                state: state,
+                kind: kind,
+                ask: nil,
+                msg: msg,
+                since: time,
+                since_estimated: false,
+                updated_at: time,
+                seen: seen,
+                group: group,
+                stale: false,
+                suspect: false
+            )
+        }
+
+        return [
+            makeRow(
+                key: "local/block:demo-api",
+                session: "api-service",
+                tab: "auth-refresh",
+                title: "token refresh",
+                harness: "claude-code",
+                state: "blocked",
+                kind: "permission",
+                msg: "Allow npm test to run?",
+                secondsAgo: 132,
+                seen: false,
+                group: "needs_you"
+            ),
+            makeRow(
+                key: "local/block:demo-web",
+                session: "web-app",
+                tab: "checkout",
+                title: "checkout flow",
+                harness: "codex",
+                state: "done",
+                msg: "Tests pass. Ready for review.",
+                secondsAgo: 96,
+                seen: false,
+                group: "needs_you"
+            ),
+            makeRow(
+                key: "local/block:demo-docs",
+                session: "docs-api",
+                tab: "reference",
+                title: "migration guide",
+                harness: "claude-code",
+                state: "working",
+                msg: "Writing the migration guide",
+                secondsAgo: 34,
+                seen: true,
+                group: "working"
+            ),
+            makeRow(
+                key: "local/block:demo-worker",
+                session: "worker",
+                tab: "queue",
+                title: "retry queue",
+                harness: "codex",
+                state: "working",
+                msg: "Running integration tests",
+                secondsAgo: 305,
+                seen: true,
+                group: "working"
+            ),
+            makeRow(
+                key: "mini/block:demo-build",
+                host: "mini",
+                session: "build",
+                tab: "ci",
+                title: "nightly build",
+                harness: "pi",
+                state: "working",
+                msg: "Compiling the release",
+                secondsAgo: 47,
+                seen: true,
+                group: "working"
+            ),
+            makeRow(
+                key: "local/block:demo-infra",
+                session: "infra",
+                tab: "terraform",
+                title: "plan review",
+                harness: "claude-code",
+                state: "idle",
+                msg: "Waiting for input",
+                secondsAgo: 7200,
+                seen: true,
+                group: "quiet"
+            ),
+            makeRow(
+                key: "local/block:demo-notes",
+                session: "notes",
+                tab: "release",
+                title: "release notes",
+                harness: "codex",
+                state: "done",
+                msg: "Changelog updated",
+                secondsAgo: 5400,
+                seen: true,
+                group: "quiet"
+            )
+        ]
     }
 }
 
@@ -510,7 +664,7 @@ struct ContentView: View {
                 .frame(width: 6, height: 6)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("rexboard")
+                Text("rexboard overlay")
                     .font(.system(size: 12, weight: .semibold))
                 Text(subtitle)
                     .font(.system(size: 10))
@@ -622,7 +776,7 @@ struct ContentView: View {
             }
             Spacer()
             if let updated = model.lastUpdated {
-                Text("updated \(shortAge(from: updated)) ago")
+                Text("updated \(shortAge(from: updated))")
                     .font(.system(size: 9))
                     .foregroundStyle(.quaternary)
             }
